@@ -54,6 +54,7 @@
                 const text = await res.text();
                 console.log("Server response:", text);
                 responseBox.textContent = "✅ Your email has been saved.";
+                window.location.href = "thank-you.html";
             } catch (err) {
                 responseBox.textContent = "❌ Error: " + err.message;
                 console.error(err);
