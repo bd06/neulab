@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cognito Authentication Demo</title>
+<style>
+body {
+font-family: Arial, sans-serif;
+max-width: 800px;
+margin: 0 auto;
+padding: 20px;
+background-color: #f5f5f5;
+}
+.container {
+background-color: white;
+padding: 30px;
+border-radius: 8px;
+box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+.login-section, .user-section {
+margin-bottom: 30px;
+}
+.hidden {
+display: none;
+}
+button {
+background-color: #0070f3;
+color: white;
+border: none;
+padding: 12px 24px;
+border-radius: 4px;
+cursor: pointer;
+font-size: 16px;
+margin: 10px 5px;
+}
+button:hover {
+background-color: #0059c9;
+}
+button:disabled {
+background-color: #cccccc;
+cursor: not-allowed;
+}
+.user-info {
+background-color: #f0f8ff;
+padding: 15px;
+border-radius: 4px;
+margin: 15px 0;
+}
+.api-data {
+background-color: #f9f9f9;
+padding: 15px;
+border-radius: 4px;
+margin: 15px 0;
+border-left: 4px solid #0070f3;
+}
+.error {
+color: #d32f2f;
+background-color: #ffebee;
+padding: 10px;
+border-radius: 4px;
+margin: 10px 0;
+}
+.success {
+color: #2e7d32;
+background-color: #e8f5e8;
+padding: 10px;
+border-radius: 4px;
+margin: 10px 0;
+}
+input {
+width: 100%;
+padding: 10px;
+margin: 10px 0;
+border: 1px solid #ddd;
+border-radius: 4px;
+box-sizing: border-box;
+}
+label {
+display: block;
+margin-top: 15px;
+font-weight: bold;
+}
+table {
+width: 100%;
+border-collapse: collapse;
+margin-top: 10px;
+}
+th, td {
+padding: 12px;
+text-align: left;
+border-bottom: 1px solid #ddd;
+}
+th {
+background-color: #0070f3;
+color: white;
+font-weight: bold;
+}
+tr:hover {
+background-color: #f5f5f5;
+}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>AWS Cognito Authentication Demo</h1>
+<!-- Configuration Section -->
+<div class="config-section">
+<h2>Configuration</h2>
+<label for="cognitoDomain">Cognito Domain:</label>
+<input type="text" id="cognitoDomain"
+placeholder="https://your-domain.auth.region.amazoncognito.com" />
+<label for="clientId">Client ID:</label>
+<input type="text" id="clientId" placeholder="Your Cognito App Client ID" />
+<label for="redirectUri">Redirect URI:</label>
+<input type="text" id="redirectUri" placeholder="http://localhost:3000" />
+<label for="apiUrl">API URL:</label>
+<input type="text" id="apiUrl" placeholder="https://your-api-gateway-url.com/api/data" />
+<button onclick="saveConfig()">Save Configuration</button>
+</div>
+<!-- Login Section -->
+<div id="loginSection" class="login-section">
+<h2>Authentication</h2>
+<p>Click the button below to sign in with AWS Cognito:</p>
+<button onclick="redirectToCognito()">Login with Cognito</button>
+</div>
+<!-- User Section (shown after login) -->
+<div id="userSection" class="user-section hidden">
+<h2>Welcome!</h2>
+<div id="userInfo" class="user-info"></div>
+<!-- Pagination Controls -->
+<div id="paginationControls" style="margin: 20px 0; display: none;">
+<label for="pageLimit">Items per page:</label>
+<select id="pageLimit" style="width: auto; padding: 8px; margin: 0 10px;">
+<option value="3">3</option>
+<option value="10">10</option>
+<option value="20" selected>20</option>
+<option value="50">50</option>
+<option value="100">100</option>
+</select>
+<button onclick="fetchApiData()">Fetch API Data</button>
+<button id="prevPageBtn" onclick="previousPage()" style="margin-left: 20px;" disabled>← Previous</button>
+<button id="nextPageBtn" onclick="nextPage()" disabled>Next →</button>
+<span id="paginationInfo" style="margin-left: 20px;"></span>
+</div>
+<button onclick="refreshTokens()">Refresh Tokens</button>
+<button onclick="logout()">Logout</button>
+<div id="apiData" class="api-data"></div>
+</div>
+<!-- Messages -->
+<div id="messages"></div>
+</div>
+<script>
+// Configuration variables
+let config = {
+cognitoDomain: '',
+clientId: '',
+redirectUri: '',
+apiUrl: ''
+};
+// Pagination state
+let paginationState = {
+currentPage: 0,
+pageHistory: [null], // Store pagination keys for each page
+items: [],
+hasNextPage: false
+};
+
+// Load configuration from localStorage on page load
+function loadConfig() {
+const savedConfig = localStorage.getItem('cognitoConfig');
+if (savedConfig) {
+config = JSON.parse(savedConfig);
+document.getElementById('cognitoDomain').value = config.cognitoDomain;
+document.getElementById('clientId').value = config.clientId;
+document.getElementById('redirectUri').value = config.redirectUri;
+document.getElementById('apiUrl').value = config.apiUrl;
+} else {
+// Set default redirect URI to current page
+config.redirectUri = window.location.origin + window.location.pathname;
+document.getElementById('redirectUri').value = config.redirectUri;
+}
+}
+
+// Save configuration to localStorage
+function saveConfig() {
+config.cognitoDomain = document.getElementById('cognitoDomain').value;
+config.clientId = document.getElementById('clientId').value;
+config.redirectUri = document.getElementById('redirectUri').value;
+config.apiUrl = document.getElementById('apiUrl').value;
+localStorage.setItem('cognitoConfig', JSON.stringify(config));
+showMessage('Configuration saved successfully!', 'success');
+}
+
+// Redirect to Cognito Hosted UI
+function redirectToCognito() {
+if (!config.cognitoDomain || !config.clientId || !config.redirectUri) {
+showMessage('Please configure all required fields first.', 'error');
+return;
+}
+// Generate state parameter for security
+const state = generateRandomString(32);
+localStorage.setItem('cognitoState', state);
+// Build authorization URL
+const authUrl = `${config.cognitoDomain}/oauth2/authorize?` +
+`response_type=code&` +
+`client_id=${config.clientId}&` +
+`redirect_uri=${encodeURIComponent(config.redirectUri)}&` +
+`scope=${encodeURIComponent("email openid")}&` +
+`state=${state}`;
+window.location.href = authUrl;
+}
+
+// Handle the callback from Cognito
+function handleCallback() {
+const urlParams = new URLSearchParams(window.location.search);
+const code = urlParams.get('code');
+const state = urlParams.get('state');
+const error = urlParams.get('error');
+if (error) {
+showMessage(`Authentication error: ${error}`, 'error');
+return;
+}
+if (code && state) {
+// Verify state parameter
+const savedState = localStorage.getItem('cognitoState');
+if (state !== savedState) {
+showMessage('Invalid state parameter. Possible CSRF attack.', 'error');
+return;
+}
+// Exchange code for tokens
+exchangeCodeForTokens(code);
+}
+}
+
+// Exchange authorization code for tokens
+async function exchangeCodeForTokens(code) {
+try {
+const response = await fetch(`${config.cognitoDomain}/oauth2/token`, {
+method: 'POST',
+headers: {
+'Content-Type': 'application/x-www-form-urlencoded',
+},
+body: new URLSearchParams({
+grant_type: 'authorization_code',
+client_id: config.clientId,
+code: code,
+redirect_uri: config.redirectUri
+})
+});
+if (!response.ok) {
+throw new Error(`Token exchange failed: ${response.status}`);
+}
+const tokens = await response.json();
+// Store tokens in localStorage
+localStorage.setItem('accessToken', tokens.access_token);
+localStorage.setItem('idToken', tokens.id_token);
+localStorage.setItem('refreshToken', tokens.refresh_token);
+// Clean up URL and state
+window.history.replaceState({}, document.title, window.location.pathname);
+localStorage.removeItem('cognitoState');
+// Show user section
+showUserSection();
+showMessage('Successfully logged in!', 'success');
+} catch (error) {
+showMessage(`Token exchange error: ${error.message}`, 'error');
+}
+}
+
+// Refresh tokens using refresh token
+async function refreshTokens() {
+const refreshToken = localStorage.getItem('refreshToken');
+if (!refreshToken) {
+showMessage('No refresh token available', 'error');
+return;
+}
+try {
+const response = await fetch(`${config.cognitoDomain}/oauth2/token`, {
+method: 'POST',
+headers: {
+'Content-Type': 'application/x-www-form-urlencoded',
+},
+body: new URLSearchParams({
+grant_type: 'refresh_token',
+client_id: config.clientId,
+refresh_token: refreshToken
+})
+});
+if (!response.ok) {
+throw new Error(`Token refresh failed: ${response.status}`);
+}
+const tokens = await response.json();
+// Update stored tokens
+localStorage.setItem('accessToken', tokens.access_token);
+localStorage.setItem('idToken', tokens.id_token);
+showMessage('Tokens refreshed successfully!', 'success');
+} catch (error) {
+showMessage(`Token refresh error: ${error.message}`, 'error');
+}
+}
+
+// ✅ UPDATED: Fetch data from API using access token with table rendering
+async function fetchApiData() {
+const idToken = localStorage.getItem('idToken');
+if (!idToken) {
+showMessage('No access token available', 'error');
+return;
+}
+if (!config.apiUrl) {
+showMessage('Please configure API URL first', 'error');
+return;
+}
+
+try {
+const limit = document.getElementById('pageLimit').value;
+let url = new URL(config.apiUrl);
+url.searchParams.append('limit', limit);
+
+// Add pagination keys if not on first page
+const currentPageKeys = paginationState.pageHistory[paginationState.currentPage];
+if (currentPageKeys && currentPageKeys.last_user_id && currentPageKeys.last_created_at) {
+url.searchParams.append('last_user_id', currentPageKeys.last_user_id);
+url.searchParams.append('last_created_at', currentPageKeys.last_created_at);
+}
+
+const response = await fetch(url.toString(), {
+method: 'GET',
+headers: {
+'Authorization': `Bearer ${idToken}`,
+'Content-Type': 'application/json'
+}
+});
+
+if (!response.ok) {
+throw new Error(`API request failed: ${response.status}`);
+}
+
+const data = await response.json();
+
+// ✅ FLATTEN DYNAMODB NESTED "S" VALUES
+const flattenDynamoItems = (items) => {
+if (!items || !Array.isArray(items)) return [];
+return items.map(item => ({
+user_id: item.user_id?.S || item.user_id || '',
+created_at: item.created_at?.S || item.created_at || '',
+name: item.name?.S || item.name || '',
+email: item.email?.S || item.email || '',
+phone: item.phone?.S || item.phone || ''
+}));
+};
+
+// Handle both flattened API response and raw DynamoDB response
+let tableItems = [];
+if (data.items) {
+  // Already flattened by API Gateway VTL
+  tableItems = data.items;
+  paginationState.hasNextPage = data.nextToken ? true : false;
+  
+  // Store next page token
+  if (data.nextToken) {
+    const nextPageKeys = {
+      last_user_id: data.nextToken.user_id?.S || data.nextToken.user_id,
+      last_created_at: data.nextToken.created_at?.S || data.nextToken.created_at
+    };
+    if (paginationState.pageHistory.length <= paginationState.currentPage + 1) {
+      paginationState.pageHistory.push(nextPageKeys);
+    }
+  }
+} else if (data.Items) {
+  // Raw DynamoDB response - flatten it
+  tableItems = flattenDynamoItems(data.Items);
+  paginationState.hasNextPage = data.LastEvaluatedKey ? true : false;
+  
+  // Store raw LastEvaluatedKey for next page
+  if (data.LastEvaluatedKey) {
+    const nextPageKeys = {
+      last_user_id: data.LastEvaluatedKey.user_id?.S || data.LastEvaluatedKey.user_id,
+      last_created_at: data.LastEvaluatedKey.created_at?.S || data.LastEvaluatedKey.created_at
+    };
+    if (paginationState.pageHistory.length <= paginationState.currentPage + 1) {
+      paginationState.pageHistory.push(nextPageKeys);
+    }
+  }
+}
+
+paginationState.items = tableItems;
+updatePaginationUI();
+
+// ✅ RENDER PROFESSIONAL HTML TABLE
+const tableHTML = `
+<h3>📋 Email List (Page ${paginationState.currentPage + 1}): ${tableItems.length} items</h3>
+<div style="overflow-x: auto;">
+<table>
+<thead>
+<tr>
+<th>User ID</th>
+<th>Created At</th>
+<th>Name</th>
+<th>Email</th>
+<th>Phone</th>
+</tr>
+</thead>
+<tbody>
+${tableItems.map((item, index) => `
+<tr>
+<td style="font-family: monospace; font-size: 14px;">${item.user_id.substring(0, 8)}...</td>
+<td>${item.created_at}</td>
+<td style="font-weight: 500;">${item.name}</td>
+<td>${item.email}</td>
+<td>${item.phone}</td>
+</tr>
+`).join('')}
+</tbody>
+</table>
+</div>
+${paginationState.hasNextPage ? '<p style="color: #0070f3; font-weight: bold;">➡️ More pages available</p>' : ''}
+`;
+
+document.getElementById('apiData').innerHTML = tableHTML;
+
+} catch (error) {
+showMessage(`API request error: ${error.message}`, 'error');
+}
+}
+
+// Navigate to previous page
+function previousPage() {
+if (paginationState.currentPage > 0) {
+paginationState.currentPage--;
+fetchApiData();
+}
+}
+
+// Navigate to next page
+function nextPage() {
+if (paginationState.hasNextPage) {
+paginationState.currentPage++;
+fetchApiData();
+}
+}
+
+// Update pagination UI buttons and info
+function updatePaginationUI() {
+const prevBtn = document.getElementById('prevPageBtn');
+const nextBtn = document.getElementById('nextPageBtn');
+const paginationInfo = document.getElementById('paginationInfo');
+
+// Enable/disable previous button
+prevBtn.disabled = paginationState.currentPage === 0;
+
+// Enable/disable next button
+nextBtn.disabled = !paginationState.hasNextPage;
+
+// Update pagination info text
+const itemCount = paginationState.items.length;
+paginationInfo.textContent = `Showing ${itemCount} items on page ${paginationState.currentPage + 1}`;
+}
+
+// Reset pagination state
+function resetPagination() {
+paginationState.currentPage = 0;
+paginationState.pageHistory = [null];
+paginationState.items = [];
+paginationState.hasNextPage = false;
+}
+
+// Show user section and decode ID token
+function showUserSection() {
+const idToken = localStorage.getItem('idToken');
+if (idToken) {
+try {
+// Decode JWT payload (note: this doesn't verify the signature)
+const payload = JSON.parse(atob(idToken.split('.')[1]));
+document.getElementById('userInfo').innerHTML = `
+<h3>User Information:</h3>
+<p><strong>Email:</strong> ${payload.email || 'N/A'}</p>
+<p><strong>Username:</strong> ${payload['cognito:username'] || 'N/A'}</p>
+<p><strong>Token Expires:</strong> ${new Date(payload.exp * 1000).toLocaleString()}</p>
+`;
+} catch (error) {
+document.getElementById('userInfo').innerHTML = '<p>Error decoding user information</p>';
+}
+}
+document.getElementById('loginSection').classList.add('hidden');
+document.getElementById('userSection').classList.remove('hidden');
+document.getElementById('paginationControls').style.display = 'block';
+resetPagination();
+}
+
+// Logout function
+function logout() {
+// Clear stored tokens
+localStorage.removeItem('accessToken');
+localStorage.removeItem('idToken');
+localStorage.removeItem('refreshToken');
+localStorage.removeItem('cognitoState');
+// Show login section
+document.getElementById('loginSection').classList.remove('hidden');
+document.getElementById('userSection').classList.add('hidden');
+document.getElementById('apiData').innerHTML = '';
+showMessage('Logged out successfully', 'success');
+}
+
+// Check if user is already logged in
+function checkAuthStatus() {
+const accessToken = localStorage.getItem('accessToken');
+const idToken = localStorage.getItem('idToken');
+if (accessToken && idToken) {
+// Check if token is still valid
+try {
+const payload = JSON.parse(atob(idToken.split('.')[1]));
+const currentTime = Math.floor(Date.now() / 1000);
+if (payload.exp > currentTime) {
+showUserSection();
+return;
+}
+} catch (error) {
+console.error('Error checking token validity:', error);
+}
+}
+// If no valid token, show login section
+logout();
+}
+
+// Utility functions
+function generateRandomString(length) {
+const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+let result = '';
+for (let i = 0; i < length; i++) {
+result += chars.charAt(Math.floor(Math.random() * chars.length));
+}
+return result;
+}
+
+function showMessage(message, type) {
+const messagesDiv = document.getElementById('messages');
+messagesDiv.innerHTML = `<div class="${type}">${message}</div>`;
+setTimeout(() => {
+messagesDiv.innerHTML = '';
+}, 5000);
+}
+
+// Initialize the application
+window.onload = function() {
+loadConfig();
+handleCallback();
+checkAuthStatus();
+};
+</script>
+</body>
+</html>
