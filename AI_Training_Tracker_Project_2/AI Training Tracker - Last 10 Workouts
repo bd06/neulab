@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Last 10 Workout Results</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 50rem;
+        margin: 3rem auto;
+        background: #fafafa;
+        padding: 2rem;
+        border-radius: 12px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        color: #111827;
+      }
+      h1,
+      h2,
+      h3 {
+        margin-top: 0;
+      }
+      .top-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+      }
+      .top-bar-actions {
+        display: flex;
+        gap: 0.75rem;
+      }
+      button {
+        padding: 0.6rem 1rem;
+        border-radius: 999px;
+        border: none;
+        font-size: 0.95rem;
+        font-weight: 600;
+        cursor: pointer;
+        background-color: #0070f3;
+        color: white;
+        transition: background 0.1s, transform 0.05s;
+        white-space: nowrap;
+      }
+      button.secondary {
+        background-color: #e5e7eb;
+        color: #111827;
+      }
+      button:hover {
+        background-color: #0059c9;
+      }
+      button.secondary:hover {
+        background-color: #d1d5db;
+      }
+      button:active {
+        transform: translateY(1px);
+      }
+      .card {
+        background: white;
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+        margin-bottom: 1.5rem;
+      }
+      .status {
+        font-size: 0.9rem;
+        color: #4b5563;
+        margin-top: 0.25rem;
+      }
+      .status.error {
+        color: #b91c1c;
+      }
+      .chart-container {
+        position: relative;
+        height: 260px;
+        margin-top: 0.5rem;
+      }
+      .workout-list {
+        max-height: 260px;
+        overflow-y: auto;
+        padding-right: 0.5rem;
+      }
+      .workout-item {
+        padding: 0.75rem 0;
+        border-bottom: 1px solid #e5e7eb;
+      }
+      .workout-item:last-child {
+        border-bottom: none;
+      }
+      .workout-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.5rem;
+        font-size: 0.9rem;
+        margin-bottom: 0.15rem;
+      }
+      .workout-meta span {
+        white-space: nowrap;
+      }
+      .workout-notes {
+        font-size: 0.9rem;
+        color: #4b5563;
+        white-space: pre-wrap;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.15rem 0.6rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        background-color: #eff6ff;
+        color: #1d4ed8;
+        font-weight: 600;
+      }
+      .empty-state {
+        font-size: 0.95rem;
+        color: #6b7280;
+      }
+      @media (max-width: 640px) {
+        body {
+          margin: 0.75rem;
+          padding: 1.25rem;
+        }
+        .top-bar {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+        .top-bar-actions {
+          width: 100%;
+          justify-content: flex-start;
+          flex-wrap: wrap;
+        }
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body>
+    <div class="top-bar">
+      <div>
+        <h2>📊 Last 10 Workout Results</h2>
+        <div class="status" id="status">Loading latest workouts…</div>
+      </div>
+      <div class="top-bar-actions">
+        <button id="refresh-btn">Refresh data</button>
+        <button class="secondary" id="back-btn">Back to Training Entry</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Duration over time</h3>
+      <div class="chart-container">
+        <canvas id="durationChart"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Workout details</h3>
+      <div id="workout-list" class="workout-list">
+        <div class="empty-state">Fetching your recent workouts…</div>
+      </div>
+    </div>
+
+    <script>
+      const API_URL =
+        "https://gb7a1s6znf.execute-api.eu-central-1.amazonaws.com/prod1/workout-list?last_user_id=1";
+
+      const statusEl = document.getElementById("status");
+      const listEl = document.getElementById("workout-list");
+      const refreshBtn = document.getElementById("refresh-btn");
+      const backBtn = document.getElementById("back-btn");
+
+      let chartInstance = null;
+
+      backBtn.addEventListener("click", () => {
+        window.location.href = "AI Training Tracker.html";
+      });
+
+      refreshBtn.addEventListener("click", () => {
+        loadWorkouts();
+      });
+
+      function setStatus(message, isError = false) {
+        statusEl.textContent = message;
+        statusEl.classList.toggle("error", isError);
+      }
+
+      function tryParseJson(text) {
+        try {
+          return JSON.parse(text);
+        } catch {
+          return null;
+        }
+      }
+
+      function normalizeWorkouts(raw) {
+        let workouts = [];
+
+        if (Array.isArray(raw)) {
+          workouts = raw;
+        } else if (raw && typeof raw === "object") {
+          if (Array.isArray(raw.workouts)) {
+            workouts = raw.workouts;
+          } else if (Array.isArray(raw.Items)) {
+            // DynamoDB-style response (capital I)
+            workouts = raw.Items;
+          } else if (Array.isArray(raw.items)) {
+            // Generic "items" key
+            workouts = raw.items;
+          } else {
+            const firstArray = Object.values(raw).find(Array.isArray);
+            if (firstArray) {
+              workouts = firstArray;
+            }
+          }
+        }
+
+        // Keep only last 10 (assuming newest are last)
+        workouts = workouts.slice(-10);
+
+        const normalized = workouts
+          .map((w) => {
+            const isDynamoLike =
+              w &&
+              typeof w === "object" &&
+              ((w.duration && typeof w.duration === "object") ||
+                (w.created_at && typeof w.created_at === "object") ||
+                (w.notes && typeof w.notes === "object"));
+
+            // Duration
+            let durationRaw;
+            if (isDynamoLike) {
+              durationRaw =
+                (w.duration && (w.duration.N ?? w.duration.S)) ??
+                (w.minutes && (w.minutes.N ?? w.minutes.S)) ??
+                (w.length && (w.length.N ?? w.length.S)) ??
+                (w.time_minutes &&
+                  (w.time_minutes.N ?? w.time_minutes.S));
+            } else {
+              durationRaw =
+                w.duration ?? w.minutes ?? w.length ?? w.time_minutes;
+            }
+            const duration = Number(durationRaw);
+
+            // Date / created_at
+            let dateRaw;
+            if (isDynamoLike) {
+              dateRaw =
+                (w.created_at && w.created_at.S) ??
+                (w.date && w.date.S) ??
+                (w.timestamp && w.timestamp.S) ??
+                (w.time && w.time.S) ??
+                null;
+            } else {
+              dateRaw =
+                w.created_at ?? w.date ?? w.timestamp ?? w.time ?? null;
+            }
+
+            // Notes
+            let notes;
+            if (isDynamoLike) {
+              notes =
+                (w.notes && w.notes.S) ??
+                (w.comment && w.comment.S) ??
+                (w.description && w.description.S) ??
+                (w.summary && w.summary.S) ??
+                "";
+            } else {
+              notes =
+                w.notes ?? w.comment ?? w.description ?? w.summary ?? "";
+            }
+
+            return {
+              raw: w,
+              duration: Number.isFinite(duration) ? duration : null,
+              date: dateRaw,
+              notes: String(notes || "").trim(),
+            };
+          })
+          .filter((w) => w.duration !== null);
+
+        return normalized;
+      }
+
+      function formatDate(dateValue) {
+        if (!dateValue) return "Unknown time";
+
+        // Handle values like "training_session.2026-01-17T13:14:03.903Z"
+        if (
+          typeof dateValue === "string" &&
+          dateValue.includes(".") &&
+          !dateValue.startsWith("20") // heuristically not already a plain ISO date
+        ) {
+          const parts = dateValue.split(".");
+          if (parts.length > 1) {
+            dateValue = parts.slice(1).join(".");
+          }
+        }
+
+        try {
+          // If it looks like ISO or timestamp
+          const d = new Date(dateValue);
+          if (!isNaN(d.getTime())) {
+            return (
+              d.toLocaleDateString(undefined, {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+              }) +
+              " · " +
+              d.toLocaleTimeString(undefined, {
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+            );
+          }
+        } catch {
+          // fall through
+        }
+        return String(dateValue);
+      }
+
+      function renderList(workouts) {
+        if (!workouts.length) {
+          listEl.innerHTML =
+            '<div class="empty-state">No workout data found to show yet.</div>';
+          return;
+        }
+
+        listEl.innerHTML = "";
+
+        // Newest first in the list
+        const reversed = [...workouts].reverse();
+
+        for (const w of reversed) {
+          const item = document.createElement("div");
+          item.className = "workout-item";
+
+          const meta = document.createElement("div");
+          meta.className = "workout-meta";
+          meta.innerHTML = `
+            <span>${formatDate(w.date)}</span>
+            <span class="pill">${w.duration} min</span>
+          `;
+
+          const notes = document.createElement("div");
+          notes.className = "workout-notes";
+          notes.textContent = w.notes || "No notes recorded.";
+
+          item.appendChild(meta);
+          item.appendChild(notes);
+          listEl.appendChild(item);
+        }
+      }
+
+      function renderChart(workouts) {
+        const ctx = document.getElementById("durationChart").getContext("2d");
+
+        if (chartInstance) {
+          chartInstance.destroy();
+        }
+
+        if (!workouts.length) {
+          if (ctx.canvas) {
+            const { width, height } = ctx.canvas;
+            ctx.clearRect(0, 0, width, height);
+          }
+          return;
+        }
+
+        const labels = workouts.map((w, idx) => {
+          if (w.date) {
+            try {
+              const d = new Date(w.date);
+              if (!isNaN(d.getTime())) {
+                return d.toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                });
+              }
+            } catch {
+              // ignore
+            }
+          }
+          return `#${idx + 1}`;
+        });
+
+        const data = workouts.map((w) => w.duration);
+
+        chartInstance = new Chart(ctx, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [
+              {
+                label: "Duration (minutes)",
+                data,
+                borderColor: "#3b82f6",
+                backgroundColor: "rgba(59, 130, 246, 0.15)",
+                tension: 0.25,
+                fill: true,
+                pointRadius: 4,
+                pointHoverRadius: 5,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: {
+                beginAtZero: true,
+                title: {
+                  display: true,
+                  text: "Minutes",
+                },
+              },
+              x: {
+                title: {
+                  display: true,
+                  text: "Workout",
+                },
+              },
+            },
+            plugins: {
+              legend: {
+                display: false,
+              },
+              tooltip: {
+                callbacks: {
+                  label: function (context) {
+                    return `${context.parsed.y} min`;
+                  },
+                },
+              },
+            },
+          },
+        });
+      }
+
+      async function loadWorkouts() {
+        setStatus("Loading latest workouts…");
+        listEl.innerHTML =
+          '<div class="empty-state">Fetching your recent workouts…</div>';
+
+        try {
+          const res = await fetch(API_URL, { method: "GET" });
+          const text = await res.text();
+          const json = tryParseJson(text);
+
+          if (!res.ok) {
+            throw new Error(
+              `Request failed with status ${res.status}${
+                json && json.message ? ": " + json.message : ""
+              }`
+            );
+          }
+
+          if (!json) {
+            throw new Error("Unable to parse response as JSON.");
+          }
+
+          const workouts = normalizeWorkouts(json);
+          if (!workouts.length) {
+            setStatus(
+              "No workout entries with duration found in the last 10 records."
+            );
+          } else {
+            setStatus(
+              `Showing ${workouts.length} recent workout${
+                workouts.length === 1 ? "" : "s"
+              }.`
+            );
+          }
+
+          renderChart(workouts);
+          renderList(workouts);
+        } catch (err) {
+          console.error(err);
+          setStatus(
+            "Could not load workouts. Please try again in a moment.",
+            true
+          );
+          listEl.innerHTML = `<div class="empty-state">Error loading data: ${
+            err.message || err
+          }</div>`;
+          renderChart([]);
+        }
+      }
+
+      // Initial load
+      loadWorkouts();
+    </script>
+  </body>
+</html>
+

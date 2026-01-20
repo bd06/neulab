@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<!DOCTYPE html>
+<html lang="en">
+   <head>
+      <meta charset="UTF-8" />
+      <title>Training Tracker</title>
+      <style>
+         * {
+         box-sizing: border-box;
+         }
+         body {
+         font-family: system-ui, sans-serif;
+         max-width: 37.5rem;
+         margin: 3rem auto;
+         background: #fafafa;
+         padding: 2rem;
+         border-radius: 12px;
+         box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+         }
+         textarea, input, button {
+         width: 100%;
+         font-size: 1rem;
+         margin-top: 1rem;
+         padding: 0.75rem;
+         border-radius: 8px;
+         border: 1px solid #ccc;
+         }
+         .label {
+         margin: 1rem 0;
+         }
+         button {
+         background-color: #0070f3;
+         color: white;
+         font-weight: 600;
+         cursor: pointer;
+         border: none;
+         transition: background 0.1s;
+         }
+         button:hover {
+         background-color: #0059c9;
+         }
+         pre {
+         background: #f4f4f4;
+         padding: 1rem;
+         border-radius: 8px;
+         white-space: pre-wrap;
+         margin-top: 1.5rem;
+         }
+      </style>
+   </head>
+   <body>
+      <h2>🧠 Training Entry</h2>
+      <label>
+      Duration (minutes):
+      <input id="duration" type="text" value="45" />
+      </label>
+      <div class="label">
+         <label>
+         Notes:
+         <textarea id="notes" rows="6" placeholder="Describe your training session..."></textarea>
+         </label>
+      </div>
+      <button id="submit">Submit</button>
+      <button id="view-workouts">Get Last 10 workout results</button>
+      <h3>Response</h3>
+      <pre id="response"></pre>
+      <script>
+         // Replace this with your actual API Gateway invoke URL
+         const apiUrl = "https://gb7a1s6znf.execute-api.eu-central-1.amazonaws.com/prod1";
+
+         document.getElementById("view-workouts").addEventListener("click", () => {
+           window.location.href = "AI Training Tracker - Last 10 Workouts.html";
+         });
+
+         document.getElementById("submit").addEventListener("click", async () => {
+         const duration = document.getElementById("duration").value.trim();
+         const notes = document.getElementById("notes").value.trim();
+         const responseBox = document.getElementById("response");
+         if (!notes) {
+         alert("Please enter some notes about your training.");
+         return;
+         }
+         const payload = {
+         user_id: "1",
+         new_session: {
+         created_at: new Date().toISOString(),
+         duration,
+         notes
+         }
+         };
+         responseBox.textContent = "⏳ Sending request...";
+         try {
+         const res = await fetch(apiUrl, {
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+         body: JSON.stringify(payload)
+         });
+         const text = await res.text();
+         try {
+         const data = JSON.parse(text);
+         responseBox.textContent = data.ai_analysis;
+         } catch {
+         responseBox.textContent = text; // fallback if not valid JSON
+         }
+         } catch (err) {
+         responseBox.textContent = "❌ " + err.message;
+         }
+         });
+      </script>
+   </body>
+</html>
